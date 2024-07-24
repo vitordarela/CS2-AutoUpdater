@@ -9,7 +9,9 @@
     using System.Text.RegularExpressions;
     using Microsoft.Extensions.Logging;
     using System.Net.Http.Json;
-    
+    using Docker.DotNet;
+    using Docker.DotNet.Models;
+
     [MinimumApiVersion(178)]
     public partial class AutoUpdater : BasePlugin, IPluginConfig<PluginConfig>
     {
@@ -246,12 +248,54 @@
         private void ShutdownServer()
         {
             Logger.LogInformation(Localizer["AutoUpdater.Console.ServerShutdownInitiated", RequiredVersion]);
-            Server.ExecuteCommand("quit");
+            //Server.ExecuteCommand("quit");
+            _ = RestartContainer();
         }
 
         private static List<CCSPlayerController> GetCurrentPlayers()
         {
             return Utilities.GetPlayers().Where(controller => controller is { IsValid: true, IsBot: false, IsHLTV: false }).ToList();
+        }
+
+        private async Task RestartContainer()
+        {
+            try
+            {
+                var dockerUri = new Uri("unix:///var/run/docker.sock");
+                using (var dockerClient = new DockerClientConfiguration(dockerUri).CreateClient())
+                {
+                    var containerId = await GetContainerIdAsync(dockerClient);
+                    if (!string.IsNullOrEmpty(containerId))
+                    {
+                        await dockerClient.Containers.RestartContainerAsync(containerId, new ContainerRestartParameters());
+                        Logger.LogInformation("Container restarted successfully.");
+                    }
+                    else
+                    {
+                        Logger.LogError("Failed to find container ID.");
+                    }
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex.Message);
+            }
+            
+        }
+
+        private static async Task<string> GetContainerIdAsync(DockerClient dockerClient)
+        {
+            var response = await dockerClient.Containers.ListContainersAsync(new ContainersListParameters()
+            {
+                Filters = new Dictionary<string, IDictionary<string, bool>>
+                {
+                    ["status"] = new Dictionary<string, bool> { ["running"] = true }
+                }
+            });
+
+            // Assumindo que há apenas um contêiner em execução e ele é o que queremos reiniciar.
+            return response.Count > 0 ? response[0].ID : null;
         }
 
         [GeneratedRegex(@"PatchVersion=(?<version>[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", RegexOptions.ExplicitCapture, 1000)]
