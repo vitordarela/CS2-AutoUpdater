@@ -248,7 +248,6 @@
         private void ShutdownServer()
         {
             Logger.LogInformation(Localizer["AutoUpdater.Console.ServerShutdownInitiated", RequiredVersion]);
-            //Server.ExecuteCommand("quit");
             _ = RestartContainer();
         }
 
@@ -294,7 +293,6 @@
                 }
             });
 
-            // Assumindo que há apenas um contêiner em execução e ele é o que queremos reiniciar.
             return response.Count > 0 ? response[0].ID : null;
         }
 
