@@ -46,6 +46,39 @@
             RegisterListener<Listeners.OnMapEnd>(OnMapEnd);
 
             AddTimer(Config.UpdateCheckInterval, CheckServerVersion, TimerFlags.REPEAT);
+            ScheduleDailyJobAtSevenAM();
+        }
+        private void ScheduleDailyJobAtSevenAM()
+        {
+            Logger.LogInformation("Auto restart daily.. 7:00 AM");
+
+            DateTime now = DateTime.Now;
+            DateTime nextRun = now.Date.AddHours(7);
+
+            if (now > nextRun)
+            {
+                // if passed from 7:00 AM, Schedule to next day
+                nextRun = nextRun.AddDays(1);
+            }
+
+            TimeSpan initialDelay = nextRun - now;
+
+            float initialDelayInSeconds = (float)initialDelay.TotalSeconds;
+
+            // only for test purpose (trigger 5 in 5 min)
+            //float repeatIntervalInSeconds = 5 * 60;
+
+            var timer = new Timer(
+           interval: initialDelayInSeconds,
+           callback: ExecuteJob);
+
+            Logger.LogInformation("Auto restart daily.. CONFIGURED");
+        }
+
+        private void ExecuteJob()
+        {
+            Logger.LogInformation("Auto restart daily.. STARTING");
+            Server.NextFrame(ManageServerUpdate);
         }
 
         public override void Unload(bool hotReload) => Dispose();
@@ -260,10 +293,14 @@
         {
             try
             {
+                Logger.LogInformation("Restarting Container...");
+
                 var dockerUri = new Uri("unix:///var/run/docker.sock");
                 using (var dockerClient = new DockerClientConfiguration(dockerUri).CreateClient())
                 {
                     var containerId = await GetContainerIdAsync(dockerClient);
+                    Logger.LogInformation("Restarting Container... ID: " + containerId);
+
                     if (!string.IsNullOrEmpty(containerId))
                     {
                         await dockerClient.Containers.RestartContainerAsync(containerId, new ContainerRestartParameters());
@@ -283,13 +320,27 @@
             
         }
 
-        private static async Task<string> GetContainerIdAsync(DockerClient dockerClient)
+        public static async Task<string> GetContainerIdAsync(DockerClient dockerClient)
+        {
+            var containerName = Environment.GetEnvironmentVariable("CONTAINER_NAME");
+
+            if (string.IsNullOrEmpty(containerName))
+            {
+                throw new InvalidOperationException("Env Variable 'CONTAINER_NAME' is not defined.");
+            }
+
+            var containerId = await GetContainerIdByNameAsync(dockerClient, containerName);
+
+            return containerId;
+        }
+
+        private static async Task<string> GetContainerIdByNameAsync(DockerClient dockerClient, string containerName)
         {
             var response = await dockerClient.Containers.ListContainersAsync(new ContainersListParameters()
             {
                 Filters = new Dictionary<string, IDictionary<string, bool>>
                 {
-                    ["status"] = new Dictionary<string, bool> { ["running"] = true }
+                    ["name"] = new Dictionary<string, bool> { [containerName] = true }
                 }
             });
 
