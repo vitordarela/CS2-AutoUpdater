@@ -50,10 +50,6 @@
         }
         private void ScheduleDailyJobAtSevenAM()
         {
-            var serverName = Environment.GetEnvironmentVariable("CS2_SERVERNAME");
-            Server.ExecuteCommand($"hostname {serverName}");
-            Logger.LogInformation($"Update server name: {serverName}");
-
             Logger.LogInformation("Auto restart daily.. 7:00 AM");
 
             DateTime now = DateTime.Now;
@@ -130,6 +126,10 @@
         {
             try
             {
+                var serverName = Environment.GetEnvironmentVariable("CS2_SERVERNAME");
+                Server.ExecuteCommand($"hostname {serverName}");
+                Logger.LogInformation($"Update server name: {serverName}");
+
                 if (RestartRequired || !await IsUpdateAvailable()) return;
                 
                 Server.NextFrame(ManageServerUpdate);
