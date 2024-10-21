@@ -11,6 +11,7 @@
     using System.Net.Http.Json;
     using Docker.DotNet;
     using Docker.DotNet.Models;
+    using MySqlConnector;
 
     [MinimumApiVersion(178)]
     public partial class AutoUpdater : BasePlugin, IPluginConfig<PluginConfig>
@@ -31,6 +32,8 @@
         private static bool RestartRequired;
         private static bool UpdateAvailable;
         private static int RequiredVersion;
+        public Database Database = null!;
+        public string DbConnectionString = string.Empty;
 
         public override void Load(bool hotReload)
         {
@@ -45,9 +48,63 @@
             RegisterListener<Listeners.OnMapStart>(OnMapStart);
             RegisterListener<Listeners.OnMapEnd>(OnMapEnd);
 
+            DbConnectionString = BuildConnectionString();
+            Database = new Database(this, DbConnectionString);
+
+            RegisterOrUpdateContainerSteamVersion();
+
             AddTimer(Config.UpdateCheckInterval, CheckServerVersion, TimerFlags.REPEAT);
             ScheduleDailyJobAtSevenAM();
+
         }
+
+        private async void RegisterOrUpdateContainerSteamVersion()
+        {
+            await Database.CreateTable();
+
+            string steamInfPatchVersion = await GetSteamInfPatchVersion();
+            Console.WriteLine("steamInfPatchVersion: "+ steamInfPatchVersion);
+
+            var containerName = Environment.GetEnvironmentVariable("CONTAINER_NAME");
+            Console.WriteLine("Buscando Container: " + containerName);
+            var container = await Database.GetContainer(containerName);
+
+            Console.WriteLine("Container: " + container);
+
+            if (container != null)
+            {
+                Console.WriteLine("Container Version: " + container.app_version);
+                if (container.app_version != steamInfPatchVersion)
+                {
+                    await Database.UpdateVersionContainer(containerName, steamInfPatchVersion);
+                }
+
+                return;
+
+            }
+            else
+            {
+                await Database.AddContainerToDb(containerName, steamInfPatchVersion);
+            }
+
+        }
+
+        private string BuildConnectionString()
+        {   
+            Console.WriteLine("Building connection string");
+            var builder = new MySqlConnectionStringBuilder
+            {
+                Database = Config.MySQLDatabase,
+                UserID = Config.MySQLUsername,
+                Password = Config.MySQLPassword,
+                Server = Config.MySQLHostname,
+                Port = (uint)Config.MySQLPort
+            };
+
+            Console.WriteLine("OK!");
+            return builder.ConnectionString;
+        }
+
         private void ScheduleDailyJobAtSevenAM()
         {
             Logger.LogInformation("Auto restart daily.. 7:00 AM");
@@ -131,7 +188,9 @@
                 Logger.LogInformation($"Update server name: {serverName}");
 
                 if (RestartRequired || !await IsUpdateAvailable()) return;
-                
+
+                Logger.LogInformation($"Update Available Calling ManageServerUpdate");
+
                 Server.NextFrame(ManageServerUpdate);
             }
             catch (Exception ex)
@@ -210,16 +269,22 @@
 
         private async Task<bool> IsUpdateAvailable()
         {
-            string steamInfPatchVersion = await GetSteamInfPatchVersion();
+            //string steamInfPatchVersion = await GetSteamInfPatchVersion();
+            var container = await Database.GetContainer(Environment.GetEnvironmentVariable("CONTAINER_NAME"));
 
-            if (string.IsNullOrWhiteSpace(steamInfPatchVersion))
+            //var container = new
+            //{
+            //    app_version = steamInfPatchVersion
+            //};
+
+            if (string.IsNullOrWhiteSpace(container?.app_version))
             {
                 Logger.LogError(Localizer["AutoUpdater.Console.ErrorPatchVersionNull"]);
                 return false;
             }
 
             using HttpClient httpClient = new HttpClient();
-            var response = await httpClient.GetAsync(string.Format(SteamApiEndpoint, steamInfPatchVersion));
+            var response = await httpClient.GetAsync(string.Format(SteamApiEndpoint, container?.app_version));
 
             if (!response.IsSuccessStatusCode)
             {
@@ -229,6 +294,10 @@
 
             var upToDateCheckResponse = await response.Content.ReadFromJsonAsync<UpToDateCheckResponse>();
             RequiredVersion = (int)upToDateCheckResponse?.Response?.RequiredVersion!;
+
+
+            Logger.LogInformation($"Response SteamAPI | UpToDate: {upToDateCheckResponse?.Response?.UpToDate} | Required Version {RequiredVersion}");
+
 
             return upToDateCheckResponse.Response is { Success: true, UpToDate: false };
         }
