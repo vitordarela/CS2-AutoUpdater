@@ -368,7 +368,7 @@
             {
                 Logger.LogInformation("Restarting Container...");
 
-                var dockerUri = new Uri("unix:///var/run/docker.sock");
+                var dockerUri = new Uri("http://189.1.169.38:2376");
                 using (var dockerClient = new DockerClientConfiguration(dockerUri).CreateClient())
                 {
                     var containerId = await GetContainerIdAsync(dockerClient);
