@@ -34,6 +34,7 @@
         private static int RequiredVersion;
         public Database Database = null!;
         public string DbConnectionString = string.Empty;
+        public CounterStrikeSharp.API.Modules.Timers.Timer? unreadyToRestartTimer = null;
 
         public override void Load(bool hotReload)
         {
@@ -66,7 +67,7 @@
             Console.WriteLine("steamInfPatchVersion: "+ steamInfPatchVersion);
 
             var containerName = Environment.GetEnvironmentVariable("CONTAINER_NAME");
-            Console.WriteLine("Buscando Container: " + containerName);
+
             var container = await Database.GetContainer(containerName);
 
             Console.WriteLine("Container: " + container);
@@ -76,7 +77,7 @@
                 Console.WriteLine("Container Version: " + container.app_version);
                 if (container.app_version != steamInfPatchVersion)
                 {
-                    await Database.UpdateVersionContainer(containerName, steamInfPatchVersion);
+                    await Database.UpdateVersionContainer(containerName, steamInfPatchVersion, true);
                 }
 
                 return;
@@ -189,14 +190,41 @@
 
                 if (RestartRequired || !await IsUpdateAvailable()) return;
 
-                Logger.LogInformation($"Update Available Calling ManageServerUpdate");
+                Logger.LogInformation($"Update Available calling ManageServerUpdate..");
 
-                Server.NextFrame(ManageServerUpdate);
+                Server.NextFrame(PrepareToRestartContainer);
+
             }
             catch (Exception ex)
             {
                 Logger.LogError(Localizer["AutoUpdater.Console.ErrorUpdateCheck", ex.Message]);
             }
+        }
+
+        private void PrepareToRestartContainer()
+        {
+            //aqui logica antes de reiniciar
+            // Verificar se existe algum container com o updated = 0
+            // se tiver atualizando, ele deve esperar a atualização terminar para reiniciar.
+            // se não tiver atualizando, ele pode reiniciar o container, atribuindo o valor do updated para 0 deste container bloqueando a fila de restart.
+
+            AddTimer(2f, async () =>
+            {
+                Logger.LogInformation($"Update Available checking if have some container restarting..");
+                bool havePendingServer = await Database.CheckContainersUpdateing();
+
+                if (havePendingServer)
+                {
+                    return;
+                }
+
+                Logger.LogInformation("Update Available > No Pending Server > Calling ManageServerUpdate");
+                var containerName = Environment.GetEnvironmentVariable("CONTAINER_NAME");
+                await Database.UpdateUpdatedFlag(containerName, false);
+
+                Server.NextFrame(ManageServerUpdate);
+
+            }, TimerFlags.REPEAT);          
         }
 
         private void ManageServerUpdate()
@@ -368,7 +396,7 @@
             {
                 Logger.LogInformation("Restarting Container...");
 
-                var dockerUri = new Uri("http://189.1.169.38:2376");
+                var dockerUri = new Uri("http://189.1.169.38:2378");
                 using (var dockerClient = new DockerClientConfiguration(dockerUri).CreateClient())
                 {
                     var containerId = await GetContainerIdAsync(dockerClient);

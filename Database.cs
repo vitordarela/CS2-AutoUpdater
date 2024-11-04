@@ -16,7 +16,7 @@ public class Database
         this.dbConnectionString = dbConnectionString;
     }
 
-    public async Task UpdateVersionContainer(string containerName, string version)
+    public async Task UpdateVersionContainer(string containerName, string version, bool serverUpdated)
     {
         try
         {
@@ -27,7 +27,9 @@ public class Database
         UPDATE 
             `{this.autoUpdater.Config.MySQLTableName}` 
         SET 
-            `app_version` = @app_version
+            `app_version` = @app_version,
+            `updated` = @updated
+
         WHERE 
             `container_name` = @container_name";
 
@@ -35,7 +37,38 @@ public class Database
             {
                 container_name = containerName,
                 app_version = version,
+                updated = serverUpdated,
             });
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+        }
+    }
+
+    public async Task UpdateUpdatedFlag(string containerName, bool serverUpdated)
+    {
+        try
+        {
+            await using var connection = new MySqlConnection(this.dbConnectionString);
+            await connection.OpenAsync();
+
+            var updateQuery = $@"
+        UPDATE 
+            `{this.autoUpdater.Config.MySQLTableName}` 
+        SET 
+            `updated` = @updated
+
+        WHERE 
+            `container_name` = @container_name";
+
+            var response = await connection.ExecuteAsync(updateQuery, new
+            {
+                container_name = containerName,
+                updated = serverUpdated,
+            });
+
+            Console.WriteLine($"Updated flag for {containerName} to {serverUpdated} Response: {response}");
         }
         catch (Exception e)
         {
@@ -93,6 +126,32 @@ public class Database
         {
             Console.WriteLine(e);
         }
+    }
+
+    public async Task<bool> CheckContainersUpdateing()
+    {
+        try
+        {
+            await using var dbConnection = new MySqlConnection(this.dbConnectionString);
+            dbConnection.Open();
+
+            var sql = $@"SELECT 
+                            EXISTS (
+                                SELECT 1 
+                                FROM `{this.autoUpdater.Config.MySQLTableName}` 
+                                WHERE updated = false
+                            ) AS is_updating;";
+
+            bool hasPendingUpdate = await dbConnection.QueryFirstOrDefaultAsync<bool>(sql);
+            return hasPendingUpdate;
+
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            return false;
+        }
+
     }
 
     public async Task<Container?> GetContainer(string containerName)
